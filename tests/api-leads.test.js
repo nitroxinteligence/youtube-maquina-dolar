@@ -89,7 +89,12 @@ test('resolve máquina, sequência, nível e campo de consentimento pelos nomes'
         Items: [{ ModelCode: 987, Sequence: 1, Subject: 'Inativo' }],
       },
       DynamicFields: {
-        Items: [{ Id: 321, Tag: 'consent_aula_magna_2' }],
+        Items: [{
+          Id: 321,
+          Name: 'Consentimento YouTube Máquina em Dólar Aula Magna',
+          Label: 'Consentimento Aula Magna',
+          Tag: 'consentimento_youtube',
+        }],
       },
     };
 

@@ -204,12 +204,28 @@ export async function resolveDestination(request, environment = process.env) {
 
   if (!consentFieldId) {
     const dynamicFields = extractItems(await request('DynamicFields'));
-    const consentField = requireNamedItem(
-      dynamicFields,
-      'Tag',
-      environment.LEADLOVERS_CONSENT_FIELD_TAG || DEFAULT_CONSENT_FIELD_TAG,
-      'Campo de consentimento',
+    const expectedTag = environment.LEADLOVERS_CONSENT_FIELD_TAG || DEFAULT_CONSENT_FIELD_TAG;
+    const exactMatches = dynamicFields.filter(
+      (field) => normalizeComparable(field?.Tag) === normalizeComparable(expectedTag),
     );
+    const semanticMatches = dynamicFields.filter((field) => {
+      const description = normalizeComparable([field?.Name, field?.Label, field?.Tag].join(' '));
+      const describesConsent = description.includes('consent');
+      const describesEvent = description.includes('aula magna')
+        || description.includes('youtube maquina');
+      return describesConsent && describesEvent;
+    });
+    const candidates = exactMatches.length > 0 ? exactMatches : semanticMatches;
+
+    if (candidates.length !== 1) {
+      throw new LeadLoversConfigurationError(
+        candidates.length === 0
+          ? `Campo de consentimento "${expectedTag}" não encontrado na LeadLovers.`
+          : 'Mais de um campo de consentimento compatível foi encontrado na LeadLovers.',
+      );
+    }
+
+    const [consentField] = candidates;
     consentFieldId = parsePositiveInteger(consentField.Id);
   }
 
