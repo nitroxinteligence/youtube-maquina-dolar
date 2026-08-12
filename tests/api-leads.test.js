@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LeadLoversApiError,
   LeadValidationError,
   buildLeadLoversPayload,
   createLeadLoversClient,
   default as handler,
+  mapLeadLoversError,
   normalizeLead,
   resolveDestination,
 } from '../api/leads.js';
@@ -158,7 +160,7 @@ test('cliente usa PUT JSON no endpoint oficial sem expor o token no corpo', asyn
   assert.equal(capturedRequest.options.body.includes('token-secreto'), false);
 });
 
-test('aceita o HTTP 412 quando a LeadLovers confirma que inseriu o lead no limite do plano', async () => {
+test('não aceita como sucesso um lead que ficou no limite do plano', async () => {
   const fakeFetch = async () => new Response(JSON.stringify({
     Message: 'Lead inserido com sucesso, mas em limite de plano',
   }), {
@@ -167,12 +169,77 @@ test('aceita o HTTP 412 quando a LeadLovers confirma que inseriu o lead no limit
   });
   const client = createLeadLoversClient('token-secreto', fakeFetch);
 
-  const result = await client('Lead', {
-    method: 'PUT',
-    body: { Email: 'maria@exemplo.com' },
+  await assert.rejects(
+    client('Lead', {
+      method: 'PUT',
+      body: { Email: 'maria@exemplo.com' },
+    }),
+    (error) => error.status === 412
+      && error.message === 'Lead inserido com sucesso, mas em limite de plano',
+  );
+});
+
+test('informa explicitamente quando o plano bloqueia a entrada do contato', () => {
+  assert.deepEqual(
+    mapLeadLoversError(new LeadLoversApiError(
+      'Lead inserido com sucesso, mas em limite de plano',
+      412,
+    )),
+    {
+      status: 409,
+      message: 'O cadastro não entrou porque o limite de contatos foi atingido. Tente novamente mais tarde.',
+    },
+  );
+});
+
+test('expõe uma mensagem segura e específica quando o e-mail existe com status inválido', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnvironment = {
+    LEADLOVERS_TOKEN: process.env.LEADLOVERS_TOKEN,
+    LEADLOVERS_MACHINE_CODE: process.env.LEADLOVERS_MACHINE_CODE,
+    LEADLOVERS_SEQUENCE_CODE: process.env.LEADLOVERS_SEQUENCE_CODE,
+    LEADLOVERS_LEVEL_CODE: process.env.LEADLOVERS_LEVEL_CODE,
+    LEADLOVERS_CONSENT_FIELD_ID: process.env.LEADLOVERS_CONSENT_FIELD_ID,
+  };
+
+  process.env.LEADLOVERS_TOKEN = 'token-secreto';
+  process.env.LEADLOVERS_MACHINE_CODE = '778563';
+  process.env.LEADLOVERS_SEQUENCE_CODE = '456';
+  process.env.LEADLOVERS_LEVEL_CODE = '1';
+  process.env.LEADLOVERS_CONSENT_FIELD_ID = '321';
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    Message: 'Lead existente na conta mas seu status é inválido para inserção em uma máquina',
+  }), {
+    status: 412,
+    headers: { 'Content-Type': 'application/json' },
   });
 
-  assert.equal(result.Message, 'Lead inserido com sucesso, mas em limite de plano');
+  const submission = createResponseRecorder();
+
+  try {
+    await handler({
+      method: 'POST',
+      body: {
+        name: 'Maria da Silva',
+        email: 'maria@exemplo.com',
+        phone: '81987654321',
+        consent: true,
+      },
+      headers: {},
+    }, submission.response);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.entries(originalEnvironment).forEach(([name, value]) => {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    });
+  }
+
+  assert.equal(submission.result.status, 409);
+  assert.equal(
+    submission.result.body.message,
+    'Este e-mail já está cadastrado, mas não pode ser vinculado novamente. Use outro e-mail.',
+  );
 });
 
 test('handler confirma o cadastro somente depois do PUT aceito pela LeadLovers', async () => {

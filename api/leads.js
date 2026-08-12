@@ -135,10 +135,7 @@ export function createLeadLoversClient(token, fetchImplementation = fetch) {
     }
 
     const payload = await readResponseBody(response);
-    const insertedAtPlanLimit = response.status === 412
-      && /lead inserido com sucesso/i.test(String(payload?.Message || ''));
-
-    if (!response.ok && !insertedAtPlanLimit) {
+    if (!response.ok) {
       throw new LeadLoversApiError(
         payload?.Message || `A LeadLovers respondeu com HTTP ${response.status}.`,
         response.status,
@@ -146,6 +143,51 @@ export function createLeadLoversClient(token, fetchImplementation = fetch) {
     }
 
     return payload;
+  };
+}
+
+export function mapLeadLoversError(error) {
+  const message = normalizeComparable(error?.message);
+
+  if (message.includes('limite de plano')) {
+    return {
+      status: 409,
+      message: 'O cadastro não entrou porque o limite de contatos foi atingido. Tente novamente mais tarde.',
+    };
+  }
+
+  if (message.includes('lead existente')
+    && message.includes('status')
+    && message.includes('invalido')) {
+    return {
+      status: 409,
+      message: 'Este e-mail já está cadastrado, mas não pode ser vinculado novamente. Use outro e-mail.',
+    };
+  }
+
+  if ((message.includes('email') || message.includes('e-mail')) && message.includes('invalido')) {
+    return { status: 422, message: 'Digite um e-mail válido.' };
+  }
+
+  if ((message.includes('telefone') || message.includes('phone')) && message.includes('invalido')) {
+    return { status: 422, message: 'Digite um WhatsApp válido, com DDD.' };
+  }
+
+  if ((message.includes('email') || message.includes('e-mail'))
+    && (message.includes('ja cadastrado') || message.includes('ja existe'))) {
+    return { status: 409, message: 'Este e-mail já está cadastrado. Use outro e-mail.' };
+  }
+
+  if ((message.includes('telefone') || message.includes('phone'))
+    && (message.includes('ja cadastrado') || message.includes('ja existe'))) {
+    return { status: 409, message: 'Este WhatsApp já está cadastrado. Use outro número.' };
+  }
+
+  return {
+    status: error?.status === 401 ? 503 : 502,
+    message: error?.status === 401
+      ? 'A integração está temporariamente indisponível.'
+      : 'A LeadLovers recusou o cadastro. Verifique os dados e tente novamente.',
   };
 }
 
@@ -321,11 +363,10 @@ export default async function handler(request, response) {
 
     if (error instanceof LeadLoversApiError) {
       console.error('[LeadLovers] API error:', error.status, error.message);
-      const diagnosticRequested = request.headers?.['x-leadlovers-diagnostic'] === 'codex-20260812';
-      return sendJson(response, 502, {
+      const mappedError = mapLeadLoversError(error);
+      return sendJson(response, mappedError.status, {
         ok: false,
-        message: 'Não foi possível salvar seus dados agora. Tente novamente.',
-        ...(diagnosticRequested ? { diagnostic: `HTTP ${error.status}: ${error.message}` } : {}),
+        message: mappedError.message,
       });
     }
 

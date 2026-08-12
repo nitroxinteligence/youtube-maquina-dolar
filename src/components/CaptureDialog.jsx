@@ -115,18 +115,22 @@ export function CaptureDialog({ open, onClose }) {
 
           <div className="form-field">
             <label htmlFor="lead-phone">WhatsApp</label>
-            <input
-              id="lead-phone"
-              name="phone"
-              type="tel"
-              autoComplete="tel-national"
-              inputMode="numeric"
-              placeholder="+55 (11) 99999-9999"
-              value={values.phone}
-              aria-invalid={Boolean(errors.phone)}
-              aria-describedby={errors.phone ? 'lead-phone-error' : undefined}
-              onChange={(event) => updateValue('phone', formatBrazilianPhone(event.target.value))}
-            />
+            <div className={`phone-input${errors.phone ? ' phone-input--invalid' : ''}`}>
+              <span className="phone-input__prefix" id="lead-phone-prefix">+55</span>
+              <input
+                id="lead-phone"
+                name="phone"
+                type="tel"
+                autoComplete="tel-national"
+                inputMode="numeric"
+                maxLength={15}
+                placeholder="(DDD) 9XXXX-XXXX"
+                value={values.phone}
+                aria-invalid={Boolean(errors.phone)}
+                aria-describedby={errors.phone ? 'lead-phone-prefix lead-phone-error' : 'lead-phone-prefix'}
+                onChange={(event) => updateValue('phone', formatBrazilianPhone(event.target.value))}
+              />
+            </div>
             {errors.phone && <span className="form-field__error" id="lead-phone-error">{errors.phone}</span>}
           </div>
 
