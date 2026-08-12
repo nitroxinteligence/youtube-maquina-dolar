@@ -158,6 +158,23 @@ test('cliente usa PUT JSON no endpoint oficial sem expor o token no corpo', asyn
   assert.equal(capturedRequest.options.body.includes('token-secreto'), false);
 });
 
+test('aceita o HTTP 412 quando a LeadLovers confirma que inseriu o lead no limite do plano', async () => {
+  const fakeFetch = async () => new Response(JSON.stringify({
+    Message: 'Lead inserido com sucesso, mas em limite de plano',
+  }), {
+    status: 412,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const client = createLeadLoversClient('token-secreto', fakeFetch);
+
+  const result = await client('Lead', {
+    method: 'PUT',
+    body: { Email: 'maria@exemplo.com' },
+  });
+
+  assert.equal(result.Message, 'Lead inserido com sucesso, mas em limite de plano');
+});
+
 test('handler confirma o cadastro somente depois do PUT aceito pela LeadLovers', async () => {
   const originalFetch = globalThis.fetch;
   const originalEnvironment = {
