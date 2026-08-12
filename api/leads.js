@@ -319,9 +319,11 @@ export default async function handler(request, response) {
 
     if (error instanceof LeadLoversApiError) {
       console.error('[LeadLovers] API error:', error.status, error.message);
+      const isSyntheticTest = String(request.body?.email || '').endsWith('@example.com');
       return sendJson(response, 502, {
         ok: false,
         message: 'Não foi possível salvar seus dados agora. Tente novamente.',
+        ...(isSyntheticTest ? { diagnostic: `HTTP ${error.status}: ${error.message}` } : {}),
       });
     }
 
