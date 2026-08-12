@@ -161,7 +161,14 @@ export function mapLeadLoversError(error) {
     && message.includes('invalido')) {
     return {
       status: 409,
-      message: 'Este e-mail já está cadastrado, mas não pode ser vinculado novamente. Use outro e-mail.',
+      message: 'Este contato já existe na LeadLovers, mas está bloqueado pelo status atual ou pelo limite da conta. Regularize a conta antes de tentar novamente.',
+    };
+  }
+
+  if (error?.status === 412) {
+    return {
+      status: 409,
+      message: 'O contato não entrou na máquina porque a conta LeadLovers atingiu o limite de contatos. Regularize o plano e tente novamente.',
     };
   }
 

@@ -192,7 +192,20 @@ test('informa explicitamente quando o plano bloqueia a entrada do contato', () =
   );
 });
 
-test('expõe uma mensagem segura e específica quando o e-mail existe com status inválido', async () => {
+test('trata qualquer variação HTTP 412 como bloqueio da conta', () => {
+  assert.deepEqual(
+    mapLeadLoversError(new LeadLoversApiError(
+      'Não foi possível inserir este lead agora',
+      412,
+    )),
+    {
+      status: 409,
+      message: 'O contato não entrou na máquina porque a conta LeadLovers atingiu o limite de contatos. Regularize o plano e tente novamente.',
+    },
+  );
+});
+
+test('não atribui ao e-mail um contato existente quando a API não informa o identificador', async () => {
   const originalFetch = globalThis.fetch;
   const originalEnvironment = {
     LEADLOVERS_TOKEN: process.env.LEADLOVERS_TOKEN,
@@ -238,7 +251,7 @@ test('expõe uma mensagem segura e específica quando o e-mail existe com status
   assert.equal(submission.result.status, 409);
   assert.equal(
     submission.result.body.message,
-    'Este e-mail já está cadastrado, mas não pode ser vinculado novamente. Use outro e-mail.',
+    'Este contato já existe na LeadLovers, mas está bloqueado pelo status atual ou pelo limite da conta. Regularize a conta antes de tentar novamente.',
   );
 });
 
