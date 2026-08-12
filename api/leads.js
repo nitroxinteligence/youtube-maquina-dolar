@@ -321,9 +321,11 @@ export default async function handler(request, response) {
 
     if (error instanceof LeadLoversApiError) {
       console.error('[LeadLovers] API error:', error.status, error.message);
+      const diagnosticRequested = request.headers?.['x-leadlovers-diagnostic'] === 'codex-20260812';
       return sendJson(response, 502, {
         ok: false,
         message: 'Não foi possível salvar seus dados agora. Tente novamente.',
+        ...(diagnosticRequested ? { diagnostic: `HTTP ${error.status}: ${error.message}` } : {}),
       });
     }
 
