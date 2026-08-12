@@ -55,6 +55,24 @@ test('rejeita cadastro sem consentimento', () => {
   );
 });
 
+test('health check informa configuração ausente sem expor segredos', async () => {
+  const originalToken = process.env.LEADLOVERS_TOKEN;
+  const health = createResponseRecorder();
+  delete process.env.LEADLOVERS_TOKEN;
+
+  try {
+    await handler({ method: 'GET' }, health.response);
+  } finally {
+    if (originalToken === undefined) delete process.env.LEADLOVERS_TOKEN;
+    else process.env.LEADLOVERS_TOKEN = originalToken;
+  }
+
+  assert.equal(health.result.status, 503);
+  assert.equal(health.result.body.ok, false);
+  assert.equal(health.result.body.diagnostic, 'LEADLOVERS_TOKEN não está configurado.');
+  assert.equal(JSON.stringify(health.result.body).includes('token-secreto'), false);
+});
+
 test('resolve máquina, sequência, nível e campo de consentimento pelos nomes', async () => {
   const calls = [];
   const request = async (endpoint, options = {}) => {

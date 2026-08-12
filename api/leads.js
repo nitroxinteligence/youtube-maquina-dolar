@@ -297,6 +297,7 @@ export default async function handler(request, response) {
       return sendJson(response, 503, {
         ok: false,
         message: 'A integração está temporariamente indisponível.',
+        ...(request.method === 'GET' ? { diagnostic: error.message } : {}),
       });
     }
 
