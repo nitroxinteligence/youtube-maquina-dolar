@@ -17,20 +17,20 @@ export function CapturePage() {
           <picture className="hero__visual">
             <source
               media="(min-width: 64rem)"
-              srcSet="/assets/hero/hero-desktop-2x1-v8.png"
-              type="image/png"
+              srcSet="/assets/hero/hero-desktop-2x1-v8.webp"
+              type="image/webp"
               height="793"
               width="1586"
             />
             <source
               media="(min-width: 40rem)"
-              srcSet="/assets/hero/hero-tablet-v7.png"
-              type="image/png"
+              srcSet="/assets/hero/hero-tablet-v7.webp"
+              type="image/webp"
               height="920"
               width="1122"
             />
             <img
-              src="/assets/hero/hero-mobile-v7.png"
+              src="/assets/hero/hero-mobile-v7.webp"
               alt="Luan Onofre e Tiago Lima na Aula Magna YouTube Máquina em Dólar"
               decoding="async"
               fetchPriority="high"

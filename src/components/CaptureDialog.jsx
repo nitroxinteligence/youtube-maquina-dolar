@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatBrazilianPhone, validateLead } from '../lib/validation';
-import { LeadLoversConfigurationError, submitLeadToLeadLovers } from '../lib/leadLovers';
+import { LeadLoversSubmissionError, submitLeadToLeadLovers } from '../lib/leadLovers';
 import { GlowButton } from './GlowButton';
 
 const initialValues = {
@@ -64,7 +64,7 @@ export function CaptureDialog({ open, onClose }) {
       await submitLeadToLeadLovers(values);
       window.location.assign('/ob/');
     } catch (error) {
-      const message = error instanceof LeadLoversConfigurationError
+      const message = error instanceof LeadLoversSubmissionError
         ? error.message
         : 'Não foi possível concluir agora. Verifique sua conexão e tente novamente.';
       setSubmitError(message);

@@ -1,73 +1,50 @@
-export class LeadLoversConfigurationError extends Error {}
+export class LeadLoversSubmissionError extends Error {}
 
-const formAction = import.meta.env.VITE_LEADLOVERS_FORM_ACTION?.trim();
-const previewEnabled = import.meta.env.DEV || import.meta.env.VITE_LEADLOVERS_PREVIEW === 'true';
+const REQUEST_TIMEOUT_MS = 15_000;
 
-function parseHiddenFields() {
-  const rawValue = import.meta.env.VITE_LEADLOVERS_HIDDEN_FIELDS;
-  if (!rawValue) return {};
+async function readResponseBody(response) {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!contentType.includes('application/json')) return {};
 
   try {
-    return JSON.parse(rawValue);
+    return await response.json();
   } catch {
-    throw new LeadLoversConfigurationError('Os campos ocultos do LeadLovers não contêm um JSON válido.');
+    return {};
   }
-}
-
-function createFormField(name, value) {
-  const input = document.createElement('input');
-  input.type = 'hidden';
-  input.name = name;
-  input.value = String(value);
-  return input;
-}
-
-function postWithNativeForm(payload) {
-  const sinkName = 'leadlovers-submit-sink';
-  let sink = document.querySelector(`iframe[name="${sinkName}"]`);
-
-  if (!sink) {
-    sink = document.createElement('iframe');
-    sink.name = sinkName;
-    sink.hidden = true;
-    sink.setAttribute('aria-hidden', 'true');
-    document.body.append(sink);
-  }
-
-  const form = document.createElement('form');
-  form.action = formAction;
-  form.method = 'POST';
-  form.target = sinkName;
-  form.hidden = true;
-
-  Object.entries(payload).forEach(([name, value]) => {
-    form.append(createFormField(name, value));
-  });
-
-  document.body.append(form);
-  form.submit();
-  form.remove();
 }
 
 export async function submitLeadToLeadLovers(lead) {
-  if (!formAction) {
-    if (!previewEnabled) {
-      throw new LeadLoversConfigurationError('O formulário ainda não foi conectado ao LeadLovers.');
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch('/api/leads', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(lead),
+      signal: controller.signal,
+    });
+    const result = await readResponseBody(response);
+
+    if (!response.ok || result.ok !== true) {
+      throw new LeadLoversSubmissionError(
+        result.message || 'Não foi possível salvar seus dados agora. Tente novamente.',
+      );
     }
 
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    return { mode: 'preview' };
+    return result;
+  } catch (error) {
+    if (error instanceof LeadLoversSubmissionError) throw error;
+
+    throw new LeadLoversSubmissionError(
+      error?.name === 'AbortError'
+        ? 'O envio demorou mais que o esperado. Tente novamente.'
+        : 'Não foi possível concluir agora. Verifique sua conexão e tente novamente.',
+    );
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-
-  const payload = {
-    ...parseHiddenFields(),
-    [import.meta.env.VITE_LEADLOVERS_NAME_FIELD || 'name']: lead.name.trim(),
-    [import.meta.env.VITE_LEADLOVERS_EMAIL_FIELD || 'email']: lead.email.trim().toLowerCase(),
-    [import.meta.env.VITE_LEADLOVERS_PHONE_FIELD || 'phone']: lead.phone.replace(/\D/g, ''),
-  };
-
-  postWithNativeForm(payload);
-  await new Promise((resolve) => window.setTimeout(resolve, 650));
-  return { mode: 'configured' };
 }
-
