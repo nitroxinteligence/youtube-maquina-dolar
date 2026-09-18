@@ -10,6 +10,8 @@ const initialValues = {
   consent: false,
 };
 
+const POST_SUBMISSION_REDIRECT_URL = 'https://devzapp.com.br/r/o9z8SGUo';
+
 export function CaptureDialog({ open, onClose }) {
   const dialogRef = useRef(null);
   const [values, setValues] = useState(initialValues);
@@ -62,7 +64,7 @@ export function CaptureDialog({ open, onClose }) {
 
     try {
       await submitLeadToLeadLovers(values);
-      window.location.assign('/ob/');
+      window.location.replace(POST_SUBMISSION_REDIRECT_URL);
     } catch (error) {
       const message = error instanceof LeadLoversSubmissionError
         ? error.message
