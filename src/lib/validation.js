@@ -37,7 +37,7 @@ export function validateLead(values) {
   }
 
   if (!values.consent) {
-    errors.consent = 'Confirme que aceita receber as comunicações.';
+    errors.consent = 'Confirme o armazenamento dos seus dados.';
   }
 
   return errors;

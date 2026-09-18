@@ -1,0 +1,18 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "youtube-maquina-dolar-leads",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-18",
+  "workers_dev": true,
+  "vars": {
+    "ALLOWED_ORIGINS": "https://www.maquina-dolar.com,https://maquina-dolar.com,https://youtube-maquina-dolar.vercel.app"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "youtube-maquina-dolar-leads",
+      "database_id": "b41384e8-8eb5-45fd-9af9-4c63d1a2f21f",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

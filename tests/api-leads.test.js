@@ -2,14 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  LeadLoversApiError,
+  CloudflareApiError,
   LeadValidationError,
-  buildLeadLoversPayload,
-  createLeadLoversClient,
+  createCloudflareClient,
   default as handler,
-  mapLeadLoversError,
+  mapCloudflareError,
   normalizeLead,
-  resolveDestination,
 } from '../api/leads.js';
 
 function createResponseRecorder() {
@@ -31,7 +29,18 @@ function createResponseRecorder() {
   return { result, response };
 }
 
-test('normaliza os dados do formulário para o formato da LeadLovers', () => {
+async function withFetch(fakeFetch, callback) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fakeFetch;
+
+  try {
+    return await callback();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test('normaliza os dados para o banco Cloudflare D1', () => {
   assert.deepEqual(normalizeLead({
     name: '  Maria   da Silva ',
     email: ' MARIA@EXEMPLO.COM ',
@@ -53,259 +62,176 @@ test('rejeita cadastro sem consentimento', () => {
       phone: '11999999999',
       consent: false,
     }),
-    LeadValidationError,
+    (error) => error instanceof LeadValidationError
+      && error.message === 'Confirme o armazenamento dos seus dados.',
   );
 });
 
-test('health check informa configuração ausente sem expor segredos', async () => {
-  const originalToken = process.env.LEADLOVERS_TOKEN;
-  const health = createResponseRecorder();
-  delete process.env.LEADLOVERS_TOKEN;
-
-  try {
-    await handler({ method: 'GET' }, health.response);
-  } finally {
-    if (originalToken === undefined) delete process.env.LEADLOVERS_TOKEN;
-    else process.env.LEADLOVERS_TOKEN = originalToken;
-  }
-
-  assert.equal(health.result.status, 503);
-  assert.equal(health.result.body.ok, false);
-  assert.equal(health.result.body.diagnostic, 'LEADLOVERS_TOKEN não está configurado.');
-  assert.equal(JSON.stringify(health.result.body).includes('token-secreto'), false);
-});
-
-test('resolve máquina, sequência, nível e campo de consentimento pelos nomes', async () => {
-  const calls = [];
-  const request = async (endpoint, options = {}) => {
-    calls.push({ endpoint, options });
-
-    const responses = {
-      Machines: {
-        Items: [{ MachineCode: 778563, MachineName: 'Aula Magna YouTube Máquina de Dólar 2026' }],
-      },
-      EmailSequences: {
-        Items: [{ SequenceCode: 456, SequenceName: 'Sequência Inicial' }],
-      },
-      Levels: {
-        Items: [{ ModelCode: 987, Sequence: 1, Subject: 'Inativo' }],
-      },
-      DynamicFields: {
-        Items: [{
-          Id: 321,
-          Name: 'Consentimento YouTube Máquina em Dólar Aula Magna',
-          Label: 'Consentimento Aula Magna',
-          Tag: 'consentimento_youtube',
-        }],
-      },
-    };
-
-    return responses[endpoint];
+test('cliente envia o cadastro ao Worker sem expor configuração no corpo', async () => {
+  let capturedRequest;
+  const fakeFetch = async (url, options) => {
+    capturedRequest = { url, options };
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    });
   };
 
-  assert.deepEqual(await resolveDestination(request, {}), {
-    machineCode: 778563,
-    sequenceCode: 456,
-    levelCode: 1,
-    consentFieldId: 321,
-  });
-  assert.deepEqual(calls.map(({ endpoint }) => endpoint), [
-    'Machines',
-    'EmailSequences',
-    'Levels',
-    'DynamicFields',
-  ]);
+  const client = createCloudflareClient('https://example.workers.dev', fakeFetch);
+  const payload = { name: 'Maria', email: 'maria@example.com', phone: '5511999999999', consent: true };
+
+  await client('/leads', { method: 'POST', body: payload });
+
+  assert.equal(capturedRequest.url, 'https://example.workers.dev/leads');
+  assert.equal(capturedRequest.options.method, 'POST');
+  assert.equal(capturedRequest.options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(capturedRequest.options.body), payload);
 });
 
-test('monta o PUT sem ativar ou configurar disparos de e-mail', () => {
-  const payload = buildLeadLoversPayload({
+test('preserva a mensagem explícita de duplicidade do banco', () => {
+  assert.deepEqual(
+    mapCloudflareError(new CloudflareApiError(
+      'Este e-mail já foi cadastrado. Use outro e-mail.',
+      409,
+    )),
+    {
+      status: 409,
+      message: 'Este e-mail já foi cadastrado. Use outro e-mail.',
+    },
+  );
+});
+
+test('health check confirma que o Worker Cloudflare está acessível', async () => {
+  const health = createResponseRecorder();
+
+  await withFetch(async (url, options) => {
+    assert.equal(url, 'https://example.workers.dev/health');
+    assert.equal(options.method, 'GET');
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }, async () => {
+    const originalUrl = process.env.CLOUDFLARE_LEADS_API_URL;
+    process.env.CLOUDFLARE_LEADS_API_URL = 'https://example.workers.dev';
+
+    try {
+      await handler({ method: 'GET' }, health.response);
+    } finally {
+      if (originalUrl === undefined) delete process.env.CLOUDFLARE_LEADS_API_URL;
+      else process.env.CLOUDFLARE_LEADS_API_URL = originalUrl;
+    }
+  });
+
+  assert.equal(health.result.status, 200);
+  assert.deepEqual(health.result.body, { ok: true });
+});
+
+test('handler envia ao Worker somente depois de validar os dados', async () => {
+  const submission = createResponseRecorder();
+  let submittedPayload;
+
+  await withFetch(async (url, options) => {
+    assert.equal(url, 'https://example.workers.dev/leads');
+    submittedPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }, async () => {
+    const originalUrl = process.env.CLOUDFLARE_LEADS_API_URL;
+    process.env.CLOUDFLARE_LEADS_API_URL = 'https://example.workers.dev';
+
+    try {
+      await handler({
+        method: 'POST',
+        body: {
+          name: ' Maria da Silva ',
+          email: 'MARIA@EXEMPLO.COM',
+          phone: '(11) 99999-9999',
+          consent: true,
+        },
+      }, submission.response);
+    } finally {
+      if (originalUrl === undefined) delete process.env.CLOUDFLARE_LEADS_API_URL;
+      else process.env.CLOUDFLARE_LEADS_API_URL = originalUrl;
+    }
+  });
+
+  assert.equal(submission.result.status, 201);
+  assert.deepEqual(submission.result.body, { ok: true });
+  assert.deepEqual(submittedPayload, {
     name: 'Maria da Silva',
     email: 'maria@exemplo.com',
     phone: '5511999999999',
     consent: true,
-  }, {
-    machineCode: 778563,
-    sequenceCode: 456,
-    levelCode: 1,
-    consentFieldId: 321,
   });
-
-  assert.deepEqual(payload.DynamicFields, [{ Id: 321, Value: 'Sim' }]);
-  assert.equal(payload.MachineCode, 778563);
-  assert.equal(payload.EmailSequenceCode, 456);
-  assert.equal(payload.SequenceLevelCode, 1);
-  assert.equal('Message' in payload, false);
 });
 
-test('cliente usa PUT JSON no endpoint oficial sem expor o token no corpo', async () => {
-  let capturedRequest;
-  const fakeFetch = async (url, options) => {
-    capturedRequest = { url, options };
-    return new Response(JSON.stringify({ Code: 123 }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-  const client = createLeadLoversClient('token-secreto', fakeFetch);
-
-  await client('Lead', {
-    method: 'PUT',
-    body: { Email: 'maria@exemplo.com' },
-  });
-
-  assert.equal(capturedRequest.url.pathname, '/webapi/Lead');
-  assert.equal(capturedRequest.url.searchParams.get('token'), 'token-secreto');
-  assert.equal(capturedRequest.options.method, 'PUT');
-  assert.equal(capturedRequest.options.body, JSON.stringify({ Email: 'maria@exemplo.com' }));
-  assert.equal(capturedRequest.options.body.includes('token-secreto'), false);
-});
-
-test('não aceita como sucesso um lead que ficou no limite do plano', async () => {
-  const fakeFetch = async () => new Response(JSON.stringify({
-    Message: 'Lead inserido com sucesso, mas em limite de plano',
-  }), {
-    status: 412,
-    headers: { 'Content-Type': 'application/json' },
-  });
-  const client = createLeadLoversClient('token-secreto', fakeFetch);
-
-  await assert.rejects(
-    client('Lead', {
-      method: 'PUT',
-      body: { Email: 'maria@exemplo.com' },
-    }),
-    (error) => error.status === 412
-      && error.message === 'Lead inserido com sucesso, mas em limite de plano',
-  );
-});
-
-test('informa explicitamente quando o plano bloqueia a entrada do contato', () => {
-  assert.deepEqual(
-    mapLeadLoversError(new LeadLoversApiError(
-      'Lead inserido com sucesso, mas em limite de plano',
-      412,
-    )),
-    {
-      status: 409,
-      message: 'O cadastro não entrou porque o limite de contatos foi atingido. Tente novamente mais tarde.',
-    },
-  );
-});
-
-test('trata qualquer variação HTTP 412 como bloqueio da conta', () => {
-  assert.deepEqual(
-    mapLeadLoversError(new LeadLoversApiError(
-      'Não foi possível inserir este lead agora',
-      412,
-    )),
-    {
-      status: 409,
-      message: 'O contato não entrou na máquina porque a conta LeadLovers atingiu o limite de contatos. Regularize o plano e tente novamente.',
-    },
-  );
-});
-
-test('não atribui ao e-mail um contato existente quando a API não informa o identificador', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalEnvironment = {
-    LEADLOVERS_TOKEN: process.env.LEADLOVERS_TOKEN,
-    LEADLOVERS_MACHINE_CODE: process.env.LEADLOVERS_MACHINE_CODE,
-    LEADLOVERS_SEQUENCE_CODE: process.env.LEADLOVERS_SEQUENCE_CODE,
-    LEADLOVERS_LEVEL_CODE: process.env.LEADLOVERS_LEVEL_CODE,
-    LEADLOVERS_CONSENT_FIELD_ID: process.env.LEADLOVERS_CONSENT_FIELD_ID,
-  };
-
-  process.env.LEADLOVERS_TOKEN = 'token-secreto';
-  process.env.LEADLOVERS_MACHINE_CODE = '778563';
-  process.env.LEADLOVERS_SEQUENCE_CODE = '456';
-  process.env.LEADLOVERS_LEVEL_CODE = '1';
-  process.env.LEADLOVERS_CONSENT_FIELD_ID = '321';
-  globalThis.fetch = async () => new Response(JSON.stringify({
-    Message: 'Lead existente na conta mas seu status é inválido para inserção em uma máquina',
-  }), {
-    status: 412,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
+test('handler devolve ao usuário a duplicidade informada pelo Worker', async () => {
   const submission = createResponseRecorder();
 
-  try {
-    await handler({
-      method: 'POST',
-      body: {
-        name: 'Maria da Silva',
-        email: 'maria@exemplo.com',
-        phone: '81987654321',
-        consent: true,
-      },
-      headers: {},
-    }, submission.response);
-  } finally {
-    globalThis.fetch = originalFetch;
-    Object.entries(originalEnvironment).forEach(([name, value]) => {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    });
-  }
+  await withFetch(async () => new Response(JSON.stringify({
+    ok: false,
+    message: 'Este WhatsApp já foi cadastrado. Use outro número.',
+  }), {
+    status: 409,
+    headers: { 'Content-Type': 'application/json' },
+  }), async () => {
+    const originalUrl = process.env.CLOUDFLARE_LEADS_API_URL;
+    process.env.CLOUDFLARE_LEADS_API_URL = 'https://example.workers.dev';
+
+    try {
+      await handler({
+        method: 'POST',
+        body: {
+          name: 'Maria da Silva',
+          email: 'maria@example.com',
+          phone: '11999999999',
+          consent: true,
+        },
+      }, submission.response);
+    } finally {
+      if (originalUrl === undefined) delete process.env.CLOUDFLARE_LEADS_API_URL;
+      else process.env.CLOUDFLARE_LEADS_API_URL = originalUrl;
+    }
+  });
 
   assert.equal(submission.result.status, 409);
-  assert.equal(
-    submission.result.body.message,
-    'Este contato já existe na LeadLovers, mas está bloqueado pelo status atual ou pelo limite da conta. Regularize a conta antes de tentar novamente.',
-  );
+  assert.deepEqual(submission.result.body, {
+    ok: false,
+    message: 'Este WhatsApp já foi cadastrado. Use outro número.',
+  });
 });
 
-test('handler confirma o cadastro somente depois do PUT aceito pela LeadLovers', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalEnvironment = {
-    LEADLOVERS_TOKEN: process.env.LEADLOVERS_TOKEN,
-    LEADLOVERS_MACHINE_CODE: process.env.LEADLOVERS_MACHINE_CODE,
-    LEADLOVERS_SEQUENCE_CODE: process.env.LEADLOVERS_SEQUENCE_CODE,
-    LEADLOVERS_LEVEL_CODE: process.env.LEADLOVERS_LEVEL_CODE,
-    LEADLOVERS_CONSENT_FIELD_ID: process.env.LEADLOVERS_CONSENT_FIELD_ID,
-  };
-  let upstreamPayload;
-
-  process.env.LEADLOVERS_TOKEN = 'token-secreto';
-  process.env.LEADLOVERS_MACHINE_CODE = '778563';
-  process.env.LEADLOVERS_SEQUENCE_CODE = '456';
-  process.env.LEADLOVERS_LEVEL_CODE = '1';
-  process.env.LEADLOVERS_CONSENT_FIELD_ID = '321';
-  globalThis.fetch = async (_url, options) => {
-    upstreamPayload = JSON.parse(options.body);
-    return new Response(JSON.stringify({ Code: 123 }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-
-  const request = {
-    method: 'POST',
-    body: {
-      name: 'Maria da Silva',
-      email: 'maria@exemplo.com',
-      phone: '+55 (11) 99999-9999',
-      consent: true,
-    },
-  };
-  const health = createResponseRecorder();
+test('handler não chama o Worker quando a validação falha', async () => {
   const submission = createResponseRecorder();
+  let calls = 0;
 
-  try {
-    await handler({ method: 'GET' }, health.response);
-    await handler(request, submission.response);
-  } finally {
-    globalThis.fetch = originalFetch;
-    Object.entries(originalEnvironment).forEach(([name, value]) => {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    });
-  }
+  await withFetch(async () => {
+    calls += 1;
+    return new Response('{}');
+  }, async () => {
+    const originalUrl = process.env.CLOUDFLARE_LEADS_API_URL;
+    process.env.CLOUDFLARE_LEADS_API_URL = 'https://example.workers.dev';
 
-  assert.equal(health.result.status, 200);
-  assert.deepEqual(health.result.body, { ok: true });
-  assert.equal(submission.result.status, 200);
-  assert.deepEqual(submission.result.body, { ok: true });
-  assert.equal(upstreamPayload.Email, 'maria@exemplo.com');
-  assert.deepEqual(upstreamPayload.DynamicFields, [{ Id: 321, Value: 'Sim' }]);
+    try {
+      await handler({
+        method: 'POST',
+        body: {
+          name: 'M',
+          email: 'invalido',
+          phone: '11',
+          consent: false,
+        },
+      }, submission.response);
+    } finally {
+      if (originalUrl === undefined) delete process.env.CLOUDFLARE_LEADS_API_URL;
+      else process.env.CLOUDFLARE_LEADS_API_URL = originalUrl;
+    }
+  });
+
+  assert.equal(calls, 0);
+  assert.equal(submission.result.status, 422);
+  assert.equal(submission.result.body.message, 'Digite um nome válido.');
 });

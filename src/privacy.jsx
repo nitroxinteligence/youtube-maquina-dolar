@@ -6,8 +6,8 @@ import './styles.css';
 function PrivacyPage() {
   return (
     <LegalPageLayout title="Política de Privacidade">
-      <p>Os dados informados no formulário serão usados para enviar conteúdos e comunicações relacionados à Aula Magna YouTube Máquina de Dólar.</p>
-      <p>Nome, WhatsApp e e-mail poderão ser processados pela plataforma LeadLovers para realizar esses envios. Você poderá solicitar a interrupção das comunicações pelos canais informados nas próprias mensagens.</p>
+      <p>Os dados informados no formulário serão usados para registrar sua inscrição e encaminhar você ao acesso da Aula Magna YouTube Máquina de Dólar.</p>
+      <p>Nome, WhatsApp e e-mail serão armazenados em um banco de dados Cloudflare D1, usado exclusivamente para o controle dos cadastros desta página. Não enviamos e-mails ou mensagens a partir deste formulário.</p>
     </LegalPageLayout>
   );
 }

@@ -9,7 +9,7 @@ function TermsPage() {
       <p>Ao acessar este site, você concorda em utilizar seu conteúdo somente para fins legais e de acordo com estes termos.</p>
       <p>Os materiais apresentados possuem finalidade educacional e informativa. Nenhuma informação publicada constitui garantia de receita, resultado financeiro ou desempenho no YouTube.</p>
       <p>Textos, identidade visual, materiais e demais conteúdos deste projeto não podem ser copiados, distribuídos ou comercializados sem autorização prévia.</p>
-      <p>O cadastro para a Aula Magna autoriza o envio das comunicações descritas na <a href="/privacidade/">Política de Privacidade</a>. O usuário poderá solicitar a interrupção desses envios pelos meios informados nas mensagens.</p>
+      <p>O cadastro para a Aula Magna autoriza o armazenamento dos dados informados e o redirecionamento para o acesso indicado, conforme a <a href="/privacidade/">Política de Privacidade</a>.</p>
     </LegalPageLayout>
   );
 }

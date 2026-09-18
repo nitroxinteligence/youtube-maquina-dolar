@@ -10,7 +10,7 @@ Pessoas que buscam renda extra com YouTube, incluindo tanto iniciantes absolutos
 
 ## Product Purpose
 
-Captar nome, WhatsApp e e-mail de interessados na Aula Magna de 8 de setembro de 2026, às 10 horas. O sucesso é um cadastro concluído com dados válidos, enviado ao LeadLovers quando as configurações oficiais forem fornecidas, seguido pelo redirecionamento para `/ob`.
+Captar nome, WhatsApp e e-mail de interessados na Aula Magna de 8 de setembro de 2026, às 10 horas. O sucesso é um cadastro concluído com dados válidos, armazenado no Cloudflare D1 e seguido pelo redirecionamento para o acesso externo configurado.
 
 ## Brand Personality
 

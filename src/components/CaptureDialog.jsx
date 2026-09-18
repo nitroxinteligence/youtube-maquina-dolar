@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatBrazilianPhone, validateLead } from '../lib/validation';
-import { LeadLoversSubmissionError, submitLeadToLeadLovers } from '../lib/leadLovers';
+import { LeadSubmissionError, submitLead } from '../lib/leads';
 import { GlowButton } from './GlowButton';
 
 const initialValues = {
@@ -63,10 +63,10 @@ export function CaptureDialog({ open, onClose }) {
     setSubmitError('');
 
     try {
-      await submitLeadToLeadLovers(values);
+      await submitLead(values);
       window.location.replace(POST_SUBMISSION_REDIRECT_URL);
     } catch (error) {
-      const message = error instanceof LeadLoversSubmissionError
+      const message = error instanceof LeadSubmissionError
         ? error.message
         : 'Não foi possível concluir agora. Verifique sua conexão e tente novamente.';
       setSubmitError(message);
@@ -164,7 +164,7 @@ export function CaptureDialog({ open, onClose }) {
               onChange={(event) => updateValue('consent', event.target.checked)}
             />
             <label htmlFor="lead-consent" id="lead-consent-help">
-              Aceito receber comunicações sobre a Aula Magna e concordo com a <a href="/privacidade/" target="_blank" rel="noreferrer">Política de Privacidade</a>.
+              Concordo com o armazenamento dos meus dados para receber o acesso à Aula Magna e com a <a href="/privacidade/" target="_blank" rel="noreferrer">Política de Privacidade</a>.
             </label>
           </div>
           {errors.consent && <span className="form-field__error consent-field__error" id="lead-consent-error">{errors.consent}</span>}

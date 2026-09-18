@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS leads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  phone TEXT NOT NULL UNIQUE,
+  consent INTEGER NOT NULL CHECK (consent = 1),
+  source TEXT NOT NULL DEFAULT 'youtube-maquina-dolar',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at);

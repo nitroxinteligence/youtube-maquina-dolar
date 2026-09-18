@@ -1,17 +1,11 @@
-const LEADLOVERS_API_URL = 'https://llapi.leadlovers.com/webapi';
-const DEFAULT_MACHINE_NAME = 'Aula Magna YouTube Máquina de Dólar 2026';
-const DEFAULT_SEQUENCE_NAME = 'Sequência Inicial';
-const DEFAULT_CONSENT_FIELD_TAG = 'consent_aula_magna_2';
+const DEFAULT_CLOUDFLARE_LEADS_API_URL = 'https://youtube-maquina-dolar-leads.nitroxinteligence.workers.dev';
 const REQUEST_TIMEOUT_MS = 12_000;
-
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-let destinationPromise;
-
 export class LeadValidationError extends Error {}
-export class LeadLoversConfigurationError extends Error {}
-export class LeadLoversApiError extends Error {
-  constructor(message, status) {
+export class CloudflareConfigurationError extends Error {}
+export class CloudflareApiError extends Error {
+  constructor(message, status = 0) {
     super(message);
     this.status = status;
   }
@@ -23,37 +17,6 @@ function normalizeComparable(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLocaleLowerCase('pt-BR');
-}
-
-function parsePositiveInteger(value) {
-  if (value === undefined || value === null || value === '') return null;
-
-  const parsed = Number.parseInt(String(value), 10);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function extractItems(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.Items)) return payload.Items;
-  if (Array.isArray(payload?.Data)) return payload.Data;
-  return [];
-}
-
-function requireNamedItem(items, property, expectedName, resourceName) {
-  const normalizedExpectedName = normalizeComparable(expectedName);
-  const matches = items.filter(
-    (item) => normalizeComparable(item?.[property]) === normalizedExpectedName,
-  );
-
-  if (matches.length !== 1) {
-    throw new LeadLoversConfigurationError(
-      matches.length === 0
-        ? `${resourceName} "${expectedName}" não encontrado na LeadLovers.`
-        : `Mais de um ${resourceName.toLocaleLowerCase('pt-BR')} chamado "${expectedName}" foi encontrado.`,
-    );
-  }
-
-  return matches[0];
 }
 
 export function normalizeLead(input) {
@@ -76,7 +39,7 @@ export function normalizeLead(input) {
   }
 
   if (input?.consent !== true) {
-    throw new LeadValidationError('Confirme que aceita receber as comunicações.');
+    throw new LeadValidationError('Confirme o armazenamento dos seus dados.');
   }
 
   return {
@@ -87,6 +50,27 @@ export function normalizeLead(input) {
   };
 }
 
+function getCloudflareApiUrl(environment = process.env) {
+  const configuredUrl = environment.CLOUDFLARE_LEADS_API_URL || DEFAULT_CLOUDFLARE_LEADS_API_URL;
+  const normalizedUrl = String(configuredUrl).trim().replace(/\/+$/, '');
+
+  if (!normalizedUrl) {
+    throw new CloudflareConfigurationError(
+      'CLOUDFLARE_LEADS_API_URL não está configurado.',
+    );
+  }
+
+  try {
+    const url = new URL(normalizedUrl);
+    if (url.protocol !== 'https:') throw new Error('URL insegura');
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    throw new CloudflareConfigurationError(
+      'CLOUDFLARE_LEADS_API_URL não contém uma URL HTTPS válida.',
+    );
+  }
+}
+
 async function readResponseBody(response) {
   const text = await response.text();
   if (!text) return {};
@@ -94,29 +78,24 @@ async function readResponseBody(response) {
   try {
     return JSON.parse(text);
   } catch {
-    return { Message: text };
+    return { message: text };
   }
 }
 
-export function createLeadLoversClient(token, fetchImplementation = fetch) {
-  if (!token) {
-    throw new LeadLoversConfigurationError('LEADLOVERS_TOKEN não está configurado.');
+export function createCloudflareClient(apiUrl, fetchImplementation = fetch) {
+  if (!apiUrl) {
+    throw new CloudflareConfigurationError(
+      'CLOUDFLARE_LEADS_API_URL não está configurado.',
+    );
   }
 
-  return async function request(endpoint, { method = 'GET', query = {}, body } = {}) {
-    const url = new URL(`${LEADLOVERS_API_URL}/${endpoint}`);
-    url.searchParams.set('token', token);
+  const baseUrl = String(apiUrl).trim().replace(/\/+$/, '');
 
-    Object.entries(query).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
-        url.searchParams.set(key, String(value));
-      }
-    });
-
+  return async function request(path, { method = 'GET', body } = {}) {
     let response;
 
     try {
-      response = await fetchImplementation(url, {
+      response = await fetchImplementation(`${baseUrl}/${String(path).replace(/^\/+/, '')}`, {
         method,
         headers: {
           Accept: 'application/json',
@@ -126,18 +105,18 @@ export function createLeadLoversClient(token, fetchImplementation = fetch) {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      throw new LeadLoversApiError(
+      throw new CloudflareApiError(
         error?.name === 'TimeoutError'
-          ? 'A LeadLovers demorou mais que o esperado para responder.'
-          : 'Não foi possível acessar a LeadLovers.',
+          ? 'A Cloudflare demorou mais que o esperado para responder.'
+          : 'Não foi possível acessar o banco de dados.',
         0,
       );
     }
 
     const payload = await readResponseBody(response);
     if (!response.ok) {
-      throw new LeadLoversApiError(
-        payload?.Message || `A LeadLovers respondeu com HTTP ${response.status}.`,
+      throw new CloudflareApiError(
+        payload?.message || `A API de cadastros respondeu com HTTP ${response.status}.`,
         response.status,
       );
     }
@@ -146,163 +125,30 @@ export function createLeadLoversClient(token, fetchImplementation = fetch) {
   };
 }
 
-export function mapLeadLoversError(error) {
+export function mapCloudflareError(error) {
   const message = normalizeComparable(error?.message);
 
-  if (message.includes('limite de plano')) {
+  if (error?.status === 409) {
     return {
       status: 409,
-      message: 'O cadastro não entrou porque o limite de contatos foi atingido. Tente novamente mais tarde.',
+      message: error.message || 'Este cadastro já existe. Use outro e-mail ou WhatsApp.',
     };
   }
 
-  if (message.includes('lead existente')
-    && message.includes('status')
-    && message.includes('invalido')) {
+  if (error?.status === 422) {
+    return { status: 422, message: error.message || 'Confira os dados informados.' };
+  }
+
+  if (message.includes('timeout') || error?.status === 504) {
     return {
-      status: 409,
-      message: 'Este contato já existe na LeadLovers, mas está bloqueado pelo status atual ou pelo limite da conta. Regularize a conta antes de tentar novamente.',
+      status: 503,
+      message: 'O banco de dados demorou mais que o esperado. Tente novamente.',
     };
-  }
-
-  if (error?.status === 412) {
-    return {
-      status: 409,
-      message: 'O contato não entrou na máquina porque a conta LeadLovers atingiu o limite de contatos. Regularize o plano e tente novamente.',
-    };
-  }
-
-  if ((message.includes('email') || message.includes('e-mail')) && message.includes('invalido')) {
-    return { status: 422, message: 'Digite um e-mail válido.' };
-  }
-
-  if ((message.includes('telefone') || message.includes('phone')) && message.includes('invalido')) {
-    return { status: 422, message: 'Digite um WhatsApp válido, com DDD.' };
-  }
-
-  if ((message.includes('email') || message.includes('e-mail'))
-    && (message.includes('ja cadastrado') || message.includes('ja existe'))) {
-    return { status: 409, message: 'Este e-mail já está cadastrado. Use outro e-mail.' };
-  }
-
-  if ((message.includes('telefone') || message.includes('phone'))
-    && (message.includes('ja cadastrado') || message.includes('ja existe'))) {
-    return { status: 409, message: 'Este WhatsApp já está cadastrado. Use outro número.' };
   }
 
   return {
-    status: error?.status === 401 ? 503 : 502,
-    message: error?.status === 401
-      ? 'A integração está temporariamente indisponível.'
-      : 'A LeadLovers recusou o cadastro. Verifique os dados e tente novamente.',
-  };
-}
-
-export async function resolveDestination(request, environment = process.env) {
-  let machineCode = parsePositiveInteger(environment.LEADLOVERS_MACHINE_CODE);
-
-  if (!machineCode) {
-    const machines = extractItems(await request('Machines'));
-    const machine = requireNamedItem(
-      machines,
-      'MachineName',
-      environment.LEADLOVERS_MACHINE_NAME || DEFAULT_MACHINE_NAME,
-      'Máquina',
-    );
-    machineCode = parsePositiveInteger(machine.MachineCode);
-  }
-
-  if (!machineCode) {
-    throw new LeadLoversConfigurationError('O código da máquina LeadLovers é inválido.');
-  }
-
-  let sequenceCode = parsePositiveInteger(environment.LEADLOVERS_SEQUENCE_CODE);
-
-  if (!sequenceCode) {
-    const sequences = extractItems(await request('EmailSequences', {
-      query: { machineCode },
-    }));
-    const sequence = requireNamedItem(
-      sequences,
-      'SequenceName',
-      environment.LEADLOVERS_SEQUENCE_NAME || DEFAULT_SEQUENCE_NAME,
-      'Sequência',
-    );
-    sequenceCode = parsePositiveInteger(sequence.SequenceCode);
-  }
-
-  if (!sequenceCode) {
-    throw new LeadLoversConfigurationError('O código da sequência LeadLovers é inválido.');
-  }
-
-  let levelCode = parsePositiveInteger(environment.LEADLOVERS_LEVEL_CODE);
-
-  if (!levelCode) {
-    const levels = extractItems(await request('Levels', {
-      query: { machineCode, sequenceCode },
-    }));
-    const firstLevel = levels
-      .filter((level) => parsePositiveInteger(level.Sequence))
-      .sort((left, right) => left.Sequence - right.Sequence)[0];
-    levelCode = parsePositiveInteger(firstLevel?.Sequence);
-  }
-
-  if (!levelCode) {
-    throw new LeadLoversConfigurationError('Nenhum nível foi encontrado na sequência LeadLovers.');
-  }
-
-  let consentFieldId = parsePositiveInteger(environment.LEADLOVERS_CONSENT_FIELD_ID);
-
-  if (!consentFieldId) {
-    const dynamicFields = extractItems(await request('DynamicFields'));
-    const expectedTag = environment.LEADLOVERS_CONSENT_FIELD_TAG || DEFAULT_CONSENT_FIELD_TAG;
-    const exactMatches = dynamicFields.filter(
-      (field) => normalizeComparable(field?.Tag) === normalizeComparable(expectedTag),
-    );
-    const semanticMatches = dynamicFields.filter((field) => {
-      const description = normalizeComparable([field?.Name, field?.Label, field?.Tag].join(' '));
-      const describesConsent = description.includes('consent');
-      const describesEvent = description.includes('aula magna')
-        || description.includes('youtube maquina');
-      return describesConsent && describesEvent;
-    });
-    const candidates = exactMatches.length > 0 ? exactMatches : semanticMatches;
-
-    if (candidates.length !== 1) {
-      throw new LeadLoversConfigurationError(
-        candidates.length === 0
-          ? `Campo de consentimento "${expectedTag}" não encontrado na LeadLovers.`
-          : 'Mais de um campo de consentimento compatível foi encontrado na LeadLovers.',
-      );
-    }
-
-    const [consentField] = candidates;
-    consentFieldId = parsePositiveInteger(consentField.Id);
-  }
-
-  if (!consentFieldId) {
-    throw new LeadLoversConfigurationError('O campo de consentimento LeadLovers é inválido.');
-  }
-
-  return { machineCode, sequenceCode, levelCode, consentFieldId };
-}
-
-export function buildLeadLoversPayload(lead, destination) {
-  return {
-    Email: lead.email,
-    Name: lead.name,
-    Phone: lead.phone,
-    MachineCode: destination.machineCode,
-    EmailSequenceCode: destination.sequenceCode,
-    SequenceLevelCode: destination.levelCode,
-    DynamicFields: [
-      {
-        Id: destination.consentFieldId,
-        Value: 'Sim',
-      },
-    ],
-    Source: 'Landing Page Aula Magna YouTube Máquina de Dólar',
-    IsEmailLead: true,
+    status: error?.status >= 500 ? 503 : 502,
+    message: 'Não foi possível salvar seus dados agora. Tente novamente.',
   };
 }
 
@@ -319,48 +165,34 @@ function parseRequestBody(body) {
 }
 
 function sendJson(response, status, payload) {
-  response.setHeader('Cache-Control', 'no-store');
   return response.status(status).json(payload);
-}
-
-function getDestination(client) {
-  if (!destinationPromise) {
-    destinationPromise = resolveDestination(client).catch((error) => {
-      destinationPromise = undefined;
-      throw error;
-    });
-  }
-
-  return destinationPromise;
 }
 
 export default async function handler(request, response) {
   if (!['GET', 'POST'].includes(request.method)) {
-    response.setHeader('Allow', 'GET, POST');
     return sendJson(response, 405, { ok: false, message: 'Método não permitido.' });
   }
 
   try {
-    const client = createLeadLoversClient(process.env.LEADLOVERS_TOKEN);
+    const apiUrl = getCloudflareApiUrl();
+    const client = createCloudflareClient(apiUrl);
 
     if (request.method === 'GET') {
-      await getDestination(client);
+      await client('/health');
       return sendJson(response, 200, { ok: true });
     }
 
     const lead = normalizeLead(parseRequestBody(request.body));
-    const destination = await getDestination(client);
-    const payload = buildLeadLoversPayload(lead, destination);
-    await client('Lead', { method: 'PUT', body: payload });
+    await client('/leads', { method: 'POST', body: lead });
 
-    return sendJson(response, 200, { ok: true });
+    return sendJson(response, 201, { ok: true });
   } catch (error) {
     if (error instanceof LeadValidationError) {
       return sendJson(response, 422, { ok: false, message: error.message });
     }
 
-    if (error instanceof LeadLoversConfigurationError) {
-      console.error('[LeadLovers] Integration configuration error:', error.message);
+    if (error instanceof CloudflareConfigurationError) {
+      console.error('[Cloudflare D1] Configuration error:', error.message);
       return sendJson(response, 503, {
         ok: false,
         message: 'A integração está temporariamente indisponível.',
@@ -368,16 +200,16 @@ export default async function handler(request, response) {
       });
     }
 
-    if (error instanceof LeadLoversApiError) {
-      console.error('[LeadLovers] API error:', error.status, error.message);
-      const mappedError = mapLeadLoversError(error);
+    if (error instanceof CloudflareApiError) {
+      console.error('[Cloudflare D1] API error:', error.status, error.message);
+      const mappedError = mapCloudflareError(error);
       return sendJson(response, mappedError.status, {
         ok: false,
         message: mappedError.message,
       });
     }
 
-    console.error('[LeadLovers] Unexpected error:', error);
+    console.error('[Cloudflare D1] Unexpected error:', error);
     return sendJson(response, 500, {
       ok: false,
       message: 'Não foi possível concluir agora. Tente novamente.',
